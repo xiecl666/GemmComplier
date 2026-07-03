@@ -4,11 +4,14 @@
 # TableGen 自动添加 -I${CMAKE_CURRENT_SOURCE_DIR}
 # .td 中的 include "Gemm.td" 可直接找到
 
+#告诉llvm以下输入都是GemmOps.td
 set(LLVM_TARGET_DEFINITIONS GemmOps.td)
 
+#调用mlir的宏，其实就是执行命令
 mlir_tablegen(Gemm.h.inc -gen-dialect-decls -dialect=gemm)
 mlir_tablegen(Gemm.cpp.inc -gen-dialect-defs -dialect=gemm)
 mlir_tablegen(GemmOps.h.inc -gen-op-decls)
 mlir_tablegen(GemmOps.cpp.inc -gen-op-defs)
 
+#定义目标，将前边的命令收集起来
 add_public_tablegen_target(GemmOpsIncGen)
