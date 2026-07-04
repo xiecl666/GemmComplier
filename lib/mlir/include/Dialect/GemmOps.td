@@ -22,6 +22,7 @@ def GemmOp:GemmcOp<"gemm",[]>{
     let results = (outs GemmCTensor:$D);
     let summary = "GEMM operation";
     let hasVerifier = 1;
+    let cppNamespace = "::mlir::gemmc";
     let extraClassDeclaration = [{
         LogicalResult verify(GemmOp op);
     }];

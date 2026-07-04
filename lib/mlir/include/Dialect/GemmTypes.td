@@ -35,10 +35,12 @@ class GemmC_Attr<string name, string attrmnemonic, list<Trait> traits = []> : At
     let mnemonic = attrmnemonic;
 }
 
-def TransposeAttr : GemmC_Attr<"trans", "trans">{
+def TransposeAttr : GemmC_Attr<"Trans", "trans">{
     let summary = "Transpose attribute";
     let parameters = (ins GemmC_Int8:$trans);
     let assemblyFormat = "`<`$trans`>`";
+    let cppNamespace = "::mlir::gemmc";
+    let constBuilderCall = "::mlir::gemmc::TransAttr::get($_builder.getContext(), ::mlir::IntegerType::get($_builder.getContext(), $0))";
 }
 
 #endif
