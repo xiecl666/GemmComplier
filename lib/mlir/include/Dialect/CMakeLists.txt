@@ -8,10 +8,14 @@
 set(LLVM_TARGET_DEFINITIONS GemmOps.td)
 
 #调用mlir的宏，其实就是执行命令
-mlir_tablegen(Gemm.h.inc -gen-dialect-decls -dialect=gemm)
-mlir_tablegen(Gemm.cpp.inc -gen-dialect-defs -dialect=gemm)
+mlir_tablegen(Gemm.h.inc -gen-dialect-decls -dialect=gemmc)
+mlir_tablegen(Gemm.cpp.inc -gen-dialect-defs -dialect=gemmc)
 mlir_tablegen(GemmOps.h.inc -gen-op-decls)
 mlir_tablegen(GemmOps.cpp.inc -gen-op-defs)
+mlir_tablegen(GemmTypes.h.inc -gen-typedef-decls -dialect=gemmc)
+mlir_tablegen(GemmTypes.cpp.inc -gen-typedef-defs -dialect=gemmc)
+mlir_tablegen(GemmAttrs.h.inc -gen-attrdef-decls -dialect=gemmc)
+mlir_tablegen(GemmAttrs.cpp.inc -gen-attrdef-defs -dialect=gemmc)
 
 #定义目标，将前边的命令收集起来
 add_public_tablegen_target(GemmOpsIncGen)

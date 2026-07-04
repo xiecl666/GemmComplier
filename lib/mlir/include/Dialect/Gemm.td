@@ -3,11 +3,11 @@
 
 include "mlir/IR/OpBase.td"
 
-def GemmDialect : Dialect{
-    let name = "gemm";
-    let cppNamespace = "::mlir::gemm";
+def GemmCDialect : Dialect{
+    let name = "gemmc";
+    let cppNamespace = "::mlir::gemmc";
     let dependentDialects = [];
-    let summary = "GEMM dialect";
+    let summary = "GEMMC dialect";
     let description = [{
         GEMM dialect for representing GEMM operations.
         This dialect is used to learn how to think.
