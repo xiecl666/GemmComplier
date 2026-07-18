@@ -444,3 +444,181 @@ def TransposeAttr : GemmC_Attr<"Trans", "trans"> { ... }
 //                          类名前缀   IR文本助记符
 // → 生成 TransAttr，.mlir 中写作 #gemmc.trans<...>
 ```
+
+---
+
+## 方言转换（Dialect Conversion）
+
+把自定义方言（如 gemmc）下降到其他方言（如 linalg），需要四个核心部件。
+
+### 1. 转换 Pattern（核心逻辑）
+
+每个要转换的 Op 写一个 `OpConversionPattern`，实现 `matchAndRewrite`：
+
+```cpp
+struct GemmOpLowering : public OpConversionPattern<gemmc::GemmOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(
+      gemmc::GemmOp op,
+      OpAdaptor adaptor,                    // 已转换的操作数
+      ConversionPatternRewriter &rewriter) const override {
+    Value A = adaptor.getA();
+    Value B = adaptor.getB();
+    Value C = adaptor.getC();
+    auto matmul = rewriter.create<linalg::MatmulOp>(
+        op.getLoc(), TypeRange{op.getType()},
+        ValueRange{A, B}, ValueRange{C});
+    rewriter.replaceOp(op, matmul.getResults());
+    return success();
+  }
+};
+```
+
+### 2. ConversionTarget（定义合法性）
+
+```cpp
+ConversionTarget target(getContext());
+target.addLegalDialect<linalg::LinalgDialect, arith::ArithDialect,
+                       tensor::TensorDialect, func::FuncDialect>();
+target.addIllegalDialect<gemmc::GemmCDialect>();   // gemmc 必须被转换掉
+```
+
+### 3. Pass（驱动转换）
+
+```cpp
+void runOnOperation() override {
+  ConversionTarget target(getContext());
+  target.addLegalDialect<linalg::LinalgDialect, arith::ArithDialect,
+                         tensor::TensorDialect, func::FuncDialect>();
+  target.addIllegalDialect<gemmc::GemmCDialect>();
+
+  RewritePatternSet patterns(&getContext());
+  patterns.add<GemmOpLowering, AddOpLowering>(&getContext());
+
+  if (failed(applyFullConversion(getOperation(), target, std::move(patterns))))
+    signalPassFailure();
+}
+```
+
+### Full vs Partial Conversion
+
+| API | 语义 | 场景 |
+|-----|------|------|
+| `applyFullConversion` | 源方言必须全部消除 | 学习阶段推荐，能立刻发现漏转的 op |
+| `applyPartialConversion` | 允许部分残留 | 渐进式 lowering |
+
+### GEMM 语义映射决策点
+
+- `gemmc.gemm` = `D = alpha*(A@B) + beta*C`
+- `linalg.matmul` 算 `A@B`；`alpha≠1` / `beta≠0` 需额外 `linalg.generic` / `arith` 做缩放
+- `transA`/`transB` 为真时先插入 `linalg.transpose`
+
+---
+
+## 用 TableGen 定义 Pass
+
+### Pass 定义 (`pass.td`)
+
+```tablegen
+def GemmcToLinalg : Pass<"gemmc-to-linalg", "ModuleOp"> {
+//                       ^^^^^^^^^^^^^^^ 命令行选项名      ^^^^^^^^ 作用对象
+    let summary = "Lower Gemmc to Linalg";
+    let constructor = "gemmc::createGemmcToLinalg()";
+    let dependentDialects = ["linalg::LinalgDialect", "arith::ArithDialect"];
+}
+```
+
+常见笔误：`FunctionOpInterface`（不是 FuncitonOpInterface）、`constructor`（不是 constrcutor）。
+`InterfacePass<"name", "FunctionOpInterface">` 作用在 func 级别；整个 module 用 `Pass<"name", "ModuleOp">`。
+
+### CMake 生成
+
+```cmake
+set(LLVM_TARGET_DEFINITIONS pass.td)
+mlir_tablegen(Passes.h.inc -gen-pass-decls -name Gemmc)
+add_public_tablegen_target(GemmcPassIncGen)
+```
+
+### Pass 声明头 `Passes.h`
+
+```cpp
+#pragma once
+#include "mlir/Pass/Pass.h"
+namespace mlir::gemmc {
+#define GEN_PASS_DECL
+#include "Pass/Passes.h.inc"
+#define GEN_PASS_REGISTRATION
+#include "Pass/Passes.h.inc"
+}
+```
+
+### Pass 实现 `.cpp`
+
+```cpp
+#include "Pass/Passes.h"
+namespace mlir::gemmc {
+#define GEN_PASS_DEF_GEMMCTOLINALG
+#include "Pass/Passes.h.inc"
+
+namespace {
+struct GemmcToLinalgPass
+    : public impl::GemmcToLinalgBase<GemmcToLinalgPass> {   // 继承基类
+  void runOnOperation() override { /* 转换逻辑 */ }        // 填空钩子
+};
+}
+
+std::unique_ptr<Pass> createGemmcToLinalg() {
+  return std::make_unique<GemmcToLinalgPass>();
+}
+}
+```
+
+### 注册 + 调用
+
+```cpp
+// gemm-opt.cpp main() 里
+mlir::gemmc::registerPasses();   // TableGen 生成的批量注册
+```
+
+```bash
+# 命令行用 pass 名（td 里第一个字符串）调用
+./tools/gemm-opt/gemm-opt input.mlir --gemmc-to-linalg
+
+# 串联多个 pass
+./tools/gemm-opt/gemm-opt input.mlir --gemmc-to-linalg --convert-linalg-to-loops --canonicalize
+```
+
+### Pass 相关宏
+
+| 宏 | 生成什么 | 用在哪 |
+|----|---------|--------|
+| `-gen-pass-decls -name Gemmc` | 所有声明 | CMake tablegen 命令 |
+| `GEN_PASS_DECL` | `createXxx()` 声明 | Passes.h |
+| `GEN_PASS_REGISTRATION` | `registerPasses()` | Passes.h |
+| `GEN_PASS_DEF_GEMMCTOLINALG` | `GemmcToLinalgBase` 基类 | 实现的 .cpp |
+
+**命令行选项名 = td 里第一个字符串参数，不是 def 名。**
+
+---
+
+## 为什么 Pass 需要继承，而 Op/Type/Attr 不需要
+
+本质区别：**Op/Type/Attr 是“纯声明性数据”，而 Pass 包含“任意命令式逻辑”。**
+
+### Op/Type/Attr —— TableGen 生成**完整类**
+
+它们的全部行为都能用 TableGen 声明清楚（operands、results、assemblyFormat），TableGen 能生成可直接用的完整类。你顶多补几个方法体（verify、initialize），不需要再继承。
+
+### Pass —— TableGen 只生成**基类骨架**
+
+Pass 的核心是 `runOnOperation()` 里的转换算法——任意 C++ 逻辑，TableGen 无法描述。它只知道 Pass 的元数据（名字、描述、选项、依赖方言），所以生成一个基类把元数据样板代码填好，留个 `runOnOperation()` 空钩子让你继承实现。
+
+### 对比
+
+| | TableGen 生成什么 | 你要做什么 |
+|---|---|---|
+| Op/Type/Attr | **完整类** | 直接用（补个别方法体）|
+| Pass | **基类骨架**（含元数据）| **继承 + 实现 `runOnOperation()`** |
+
+**一句话：能被声明式完全描述的（Op/Type/Attr）就生成完整类；含有无法声明的命令式逻辑的（Pass）就只能生成基类留钩子让你继承。**

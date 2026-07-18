@@ -3,6 +3,7 @@
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/Bytecode/BytecodeOpInterface.h" 
+#include "mlir/IR/BuiltinTypes.h"
 
 #define GET_TYPEDEF_CLASSES
 #include "Dialect/GemmTypes.h.inc"  

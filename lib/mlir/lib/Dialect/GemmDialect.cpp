@@ -48,6 +48,12 @@ namespace gemmc {
     LogicalResult GemmOp::verify() {
         return success();
     }
+    LogicalResult AddOp::verify() {
+        return success();
+    }
+    LogicalResult ConcatOp::verify() {
+        return success();
+    }
     void GemmCDialect::getCanonicalizationPatterns(
     mlir::RewritePatternSet &results) const {
     }
